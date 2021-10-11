@@ -14,6 +14,12 @@ B<mr> [options] status
 
 B<mr> [options] clean [-f]
 
+B<mr> [options] purge [-f]
+
+B<mr> [options] tainted
+
+B<mr> [options] untainted
+
 B<mr> [options] commit [-m "message"]
 
 B<mr> [options] record [-m "message"]
@@ -29,6 +35,8 @@ B<mr> [options] log
 B<mr> [options] grep pattern
 
 B<mr> [options] run command [param ...]
+
+B<mr> [options] discover
 
 B<mr> [options] bootstrap src [directory]
 
@@ -87,6 +95,28 @@ control systems, also shows unpushed local branches.
 Print ignored files, untracked files and other cruft in the working directory.
 
 The optional -f parameter allows removing the files as well as printing them.
+
+=item purge
+
+The even-better-clean :) You have lots of repositories and don't want to rummage
+through them to figure out whether they can be deleted? This is *your* go-to
+command. It will show whether they are safe to delete or have local commits,
+stashes, etc.
+
+The optional -f parameter allows deleting the repositories with no interesting content.
+With this option, the .mrconfig will not be updated to leave a record of what had been
+present before purging.
+
+B<WARNING> This *optional* parameter has no "Are you really sure" prompt. If this is
+run on a ZFS backed system, you can access the repository using the '.snapshot' store.
+
+=item tainted
+Run this command to __see__ what repositories have no changes and may be considered
+for further action because they contain uncommitted / unpushed changes.
+
+=item untainted
+Run this command with the '-m' option (i.e. mr -m untainted) to see what repositoies
+have no changes and could be purged.
 
 =item commit (or ci)
 
@@ -190,6 +220,13 @@ You can also just use the recursive option instead:
 These commands are also available:
 
 =over 4
+
+=item discover
+
+Causes mr to register any subdirectory containing a git repository. A simple
+workflow would be to remove your ~/.mrconfig file and then run 'mr discover'
+to re-create it.
+
 
 =item bootstrap src [directory]
 
@@ -2271,6 +2308,19 @@ sub bootstrap {
 	exitstats();
 }
 
+sub discover {
+       eval q{use File::Copy};
+       die $@ if $@;
+       my $output;
+       print "Searching for git repositories in $directory\n";
+       my @directories = `find . -xdev -name .git`;
+       foreach my $dir(@directories) {
+               $dir =~ s/\.git//;
+               print "mr register $dir";
+               $output = `mr register $dir` ;
+       }
+}
+
 # alias expansion and command stemming
 sub expandaction {
 	my $action=shift;
@@ -2412,6 +2462,8 @@ sub main {
 	check();
 	init();
 	help(@ARGV) if $ARGV[0] eq 'help';
+	discover if $ARGV[0] eq 'discover';
+	exit 0 if $ARGV[0] eq 'discover';
 
 	startingconfig();
 	loadconfig($HOME_MR_CONFIG);
@@ -2748,6 +2800,29 @@ veracity_trusted_checkout = vv clone $url $repo
 list = true
 config =
 bootstrap =
+
+purge =
+  prefix="echo This directory seems to have no changes.\nIt is safe to \n"
+  getopt --options=nfm -- $MR_SWITCHES | egrep -qw 'f|force' && prefix=""
+  myStatus=`mr -n status | xargs echo  | perl -pe 's|(mr\s+\S+:)|\n\1|g'`
+  emptyStringMeansNoChanges=`echo $myStatus |  perl -pe 's|(mr\s+\S+:)|\n\1|g' | perl -nle 's|mr status: (\S+)\s+(\S+.*)|got $1| || print'`
+  [ -n "$emptyStringMeansNoChanges" ] || prefix='echo This repo __has__ changes.\nRunning purge with -f will not '
+  [ -z "$prefix" ] && >&2 echo removing $MR_REPO
+  ${prefix}rm -rf $MR_REPO
+
+untainted =
+  prefix="echo"
+  myStatus=`mr -n status | xargs echo  | perl -pe 's|(mr\s+\S+:)|\n\1|g'`
+  emptyStringMeansNoChanges=`echo $myStatus |  perl -pe 's|(mr\s+\S+:)|\n\1|g' | perl -nle 's|mr status: (\S+)\s+(\S+.*)|got $1| || print'`
+  [ -n "$emptyStringMeansNoChanges" ] && echo This repo has no changes -- you should consider purging it.
+  true
+
+tainted =
+  prefix="echo"
+  myStatus=`mr -n status | xargs echo  | perl -pe 's|(mr\s+\S+:)|\n\1|g'`
+  emptyStringMeansNoChanges=`echo $myStatus |  perl -pe 's|(mr\s+\S+:)|\n\1|g' | perl -nle 's|mr status: (\S+)\s+(\S+.*)|got $1| || print'`
+  [ -n "$emptyStringMeansNoChanges" ] || echo This repo has changes you should evaluate.
+  true
 
 online =
 	if [ -s ~/.mrlog ]; then
